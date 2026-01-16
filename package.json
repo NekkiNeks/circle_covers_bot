@@ -8,7 +8,7 @@
 	"main": "bot.ts",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1",
-		"start": "ts-node index2.ts"
+		"start": "ts-node bot.ts"
 	},
 	"dependencies": {
 		"telegraf": "^4.16.3",

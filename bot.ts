@@ -1,159 +1,198 @@
-import { Telegraf } from 'telegraf';
+import { Composer, Context, Scenes, session, Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
-import fs from 'node:fs';
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import fs from 'node:fs';
 import pfs from 'fs/promises';
+import { promisify } from 'node:util';
+import { exec } from 'node:child_process';
 
-const BOT_TOKEN = '8504277957:AAEgUjf1zjVmMmODe7hVSBM_sZ84aLOkcj0';
+const execAsync = promisify(exec);
+
+/* ===== Тип состояния сцены ===== */
+interface WizardState {
+	imagePath?: string;
+	audioPath?: string;
+	startSec?: number;
+	endSec?: number;
+	choice?: 'DEFAULT' | 'VINYL' | 'CD';
+}
+
+const UserStates = new Map<number, WizardState>();
+
 const TEMP_DIR = './temp';
+const BOT_TOKEN = '8504277957:AAEgUjf1zjVmMmODe7hVSBM_sZ84aLOkcj0';
 
-const bot = new Telegraf(BOT_TOKEN);
+const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN);
 
-const sessions = new Map<
-	number,
-	{
-		imagePath?: string;
-		audioPath?: string;
-		startSec?: number;
+// ПОлучение изображения
+const imageStep = new Composer<Scenes.WizardContext>();
+imageStep.on(message('photo'), async ctx => {
+	const chatId = getChatId(ctx);
+	ctx.reply('Загружаю фото...');
+
+	const imageId = ctx.message.photo.at(-1)!.file_id;
+	const imagePath = path.join(TEMP_DIR, `image_${chatId}.jpg`);
+	const fileLink = await ctx.telegram.getFileLink(imageId);
+	const res = await fetch(fileLink.href);
+	fs.writeFileSync(imagePath, Buffer.from(await res.arrayBuffer()));
+
+	UserStates.set(chatId, { imagePath });
+
+	await ctx.reply('Фото получено ✅. Теперь отправь аудио 🎧');
+	return ctx.wizard.next();
+});
+
+// Получение аудио
+const audioStep = new Composer<Scenes.WizardContext>();
+audioStep.on(message('audio'), async ctx => {
+	const chatId = getChatId(ctx);
+
+	const fileId = ctx.message.audio.file_id;
+
+	await ctx.reply('Загружаю аудио, это может занять какое-то время...');
+	const audioPath = path.join(TEMP_DIR, `track_${chatId}.mp3`);
+	const fileLink = await ctx.telegram.getFileLink(fileId);
+	const res = await fetch(fileLink.href);
+	fs.writeFileSync(audioPath, Buffer.from(await res.arrayBuffer()));
+
+	// TODO: Вынести в отдельный метод
+	const userState = UserStates.get(chatId);
+	if (!userState) throw new Error('Ошибка получения загруженных данных');
+	userState.audioPath = audioPath;
+	UserStates.set(chatId, userState);
+
+	await ctx.reply('Аудио получено ✅. Теперь отправь время старта в секундах (например: 15) ⏱️');
+
+	return ctx.wizard.next();
+});
+
+// Получение времени старта аудио
+const startSecStep = new Composer<Scenes.WizardContext>();
+startSecStep.on(message('text'), async ctx => {
+	const chatId = getChatId(ctx);
+
+	const startSec = parseInt(ctx.message.text, 10);
+	if (isNaN(startSec) || startSec < 0) {
+		await ctx.reply('Пожалуйста, отправь корректное число секунд (0 и больше).');
+		return;
 	}
->();
 
-// --------------------
-// Фото
-// --------------------
-bot.on(message('photo'), async ctx => {
+	// TODO: Вынести в отдельный метод
+	const userState = UserStates.get(chatId);
+	if (!userState) throw new Error('Ошибка получения загруженных данных');
+	userState.startSec = startSec;
+	UserStates.set(chatId, userState);
+
+	await ctx.reply(`Время старта установлено: ${startSec} сек ✅`);
+
+	await ctx.reply(
+		'Выбери вариант отображения обложки:',
+		Markup.inlineKeyboard([
+			Markup.button.callback('Стандартный', 'DEFAULT'),
+			Markup.button.callback('Винил', 'VINYL'),
+			Markup.button.callback('CD Диск', 'CD'),
+		]),
+	);
+
+	// Переходим к следующему шагу
+	return ctx.wizard.next();
+});
+
+const coverTypeStep = new Composer<Scenes.WizardContext>();
+coverTypeStep.on('callback_query', async ctx => {
+	if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) {
+		await ctx.reply('Пожалуйста, выбери вариант кнопкой');
+		return;
+	}
+
+	const selectedCoverType = ctx.callbackQuery.data as 'DEFAULT' | 'VINYL' | 'CD';
+
+	const chatId = getChatId(ctx);
+
+	const userState = UserStates.get(chatId);
+	if (!userState) throw new Error('Ошибка получения данных пользователя');
+
+	userState.choice = selectedCoverType;
+	UserStates.set(chatId, userState);
+
+	await ctx.answerCbQuery('Выбор принят...');
+	await ctx.reply(`Выбран тип обложки: \`${selectedCoverType}\` ✅`, { parse_mode: 'MarkdownV2' });
+
+	await ctx.reply('Начинаю генерацию видео.');
+
+	const fileBuffer = await generateVideo(chatId, userState);
+
+	await ctx.reply('Видео сгенерированно и уже отправляется вам, подождите еще немного...');
+
+	await ctx.sendVideoNote({ source: fileBuffer });
+
+	await ctx.reply('Готово! Для того чтобы снова сгенерировать видео просто выберите "Начать" в меню бота. ');
+
+	return ctx.scene.leave();
+});
+
+const scene = new Scenes.WizardScene<Scenes.WizardContext>(
+	'sceneId',
+	async ctx => {
+		await ctx.reply('Отправьте изображение...');
+		return ctx.wizard.next();
+	},
+	imageStep, // шаг с фильтром
+	audioStep, // аналогично для аудио
+	startSecStep, // для числа
+	coverTypeStep,
+);
+
+const stage = new Scenes.Stage<Scenes.WizardContext>([scene]);
+
+bot.use(session());
+bot.use(stage.middleware());
+
+const mainMenu = Markup.keyboard([['Начать', 'Отмена']])
+	.resize()
+	.oneTime(false); // клавиатура не пропадает после нажатия
+
+bot.start(async ctx => {
+	await ctx.reply('Для начала создания кружка выбери "Начать" в меню.', mainMenu);
+});
+
+// Обновляем клавиатуру при сбросе сцены или завершении
+bot.hears('Отмена', async ctx => {
+	await ctx.reply('Процесс отменен ✅', mainMenu);
+	return ctx.scene.leave();
+});
+
+bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
+
+bot.launch().then(() => console.log('Bot started 🚀'));
+
+function getChatId(ctx: Context): number {
+	const chatId = ctx.chat?.id;
+
+	if (!chatId) throw new Error('Ошибка получения ID чата.');
+
+	return chatId;
+}
+
+async function generateVideo(chatId: number, userState: WizardState): Promise<Buffer> {
+	if (!userState.imagePath || !userState.audioPath || !userState.startSec) {
+		throw new Error('Не все данные для генерации видео указаны');
+	}
+
+	const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
+
+	// Формируем команду для bash
+	const cmd = `bash render.sh "${userState.imagePath}" "${userState.audioPath}" "${outputPath}" 30 ${userState.startSec}`;
+
 	try {
-		if (!ctx.message?.photo) return;
+		// Ждём пока скрипт выполнится
+		await execAsync(cmd);
 
-		const chatId = ctx.chat?.id;
-		if (!chatId) return;
-
-		await ctx.reply('Загружаю изображение...');
-		const imageId = ctx.message.photo.at(-1)!.file_id;
-		const imagePath = path.join(TEMP_DIR, `image_${chatId}.jpg`);
-		const fileLink = await ctx.telegram.getFileLink(imageId);
-		const res = await fetch(fileLink.href);
-		fs.writeFileSync(imagePath, Buffer.from(await res.arrayBuffer()));
-
-		sessions.set(chatId, { imagePath });
-
-		await ctx.reply('Изображение получено ✅. Теперь отправь аудио или voice 🎧');
-	} catch (error) {
-		const replyMessage = error.message || 'Неизвестная ошибка на стороне сервера';
-		ctx.reply(`Ошибка обработки запроса: ${replyMessage}`);
+		// Читаем готовый файл в Buffer
+		const buffer = await pfs.readFile(outputPath);
+		return buffer;
+	} catch (err) {
+		console.error('Ошибка генерации видео:', err);
+		throw err;
 	}
-});
-
-// --------------------
-// Аудио / Voice
-// --------------------
-bot.on(message('audio'), async ctx => {
-	try {
-		if (!ctx.message?.audio) return;
-
-		const chatId = ctx.chat?.id;
-		if (!chatId) return;
-
-		const session = sessions.get(chatId);
-		if (!session?.imagePath) {
-			await ctx.reply('Сначала нужно отправить фото.');
-			return;
-		}
-
-		const fileId = ctx.message.audio.file_id;
-
-		await ctx.reply('Загружаю аудио...');
-		const audioPath = path.join(TEMP_DIR, `track_${chatId}.mp3`);
-		const fileLink = await ctx.telegram.getFileLink(fileId);
-		const res = await fetch(fileLink.href);
-		fs.writeFileSync(audioPath, Buffer.from(await res.arrayBuffer()));
-
-		session.audioPath = audioPath;
-		sessions.set(chatId, session);
-
-		await ctx.reply('Аудио получено ✅. Теперь отправь время старта в секундах (например: 15) ⏱️');
-	} catch (error) {
-		const replyMessage = error.message || 'Неизвестная ошибка на стороне сервера';
-		ctx.reply(`Ошибка обработки запроса: ${replyMessage}`);
-	}
-});
-
-// --------------------
-// Время старта
-// --------------------
-bot.on(message('text'), async ctx => {
-	try {
-		if (!ctx.message?.text) return;
-
-		const chatId = ctx.chat?.id;
-		if (!chatId) return;
-
-		const session = sessions.get(chatId);
-		if (!session?.imagePath || !session?.audioPath) return;
-
-		if (!session.imagePath || !session.audioPath) {
-			throw new Error('Отсутствуют обложка или аудио');
-		}
-
-		const startSec = parseInt(ctx.message.text, 10);
-		if (isNaN(startSec) || startSec < 0) {
-			await ctx.reply('Пожалуйста, отправь корректное число секунд (0 и больше).');
-			return;
-		}
-
-		session.startSec = startSec;
-		sessions.set(chatId, session);
-
-		const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
-
-		await ctx.reply('Генерирую видео ⏳');
-
-		// Запускаем render.sh с передачей секунды старта
-		exec(`bash render.sh "${session.imagePath}" "${session.audioPath}" "${outputPath}" 30 ${startSec}`, async error => {
-			if (error) {
-				console.error(error);
-				await ctx.reply('Ошибка при рендере видео.');
-				return;
-			}
-
-			const fileBuffer = await pfs.readFile(outputPath);
-			await ctx.sendVideoNote({ source: fileBuffer });
-
-			// Чистим сессию
-			sessions.delete(chatId);
-		});
-	} catch (error) {
-		const replyMessage = error.message || 'Неизвестная ошибка на стороне сервера';
-		ctx.reply(`Ошибка обработки запроса: ${replyMessage}`);
-	}
-});
-
-bot.launch();
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-// test message
-bot.on(message('text'), async ctx => {
-	if (ctx.message.text === 'test') {
-		const imagePath = path.join(TEMP_DIR, `test_pic.jpg`);
-		const audioPath = path.join(TEMP_DIR, `test_audio.mp3`);
-		const outputPath = path.join(TEMP_DIR, `test_out.mp4`);
-
-		exec(`bash render.sh "${imagePath}" "${audioPath}" "${outputPath}" `, async error => {
-			if (error) {
-				console.error(error);
-				await ctx.reply('Ошибка при рендере видео.');
-				return;
-			}
-
-			const fileBuffer = await pfs.readFile(outputPath);
-			await ctx.sendVideoNote({ source: fileBuffer });
-		});
-	} else {
-		await ctx.reply('Не могу обработать данный запрос');
-	}
-
-	return;
-});
+}
