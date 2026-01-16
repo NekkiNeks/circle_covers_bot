@@ -172,6 +172,32 @@ const scene = new Scenes.WizardScene<Scenes.WizardContext>(
 
 const stage = new Scenes.Stage<Scenes.WizardContext>([scene]);
 
+// Обработка ошибок
+bot.catch(async (err, ctx) => {
+	let errorMessage: string = 'unknown error';
+
+	if (err instanceof Error) {
+		errorMessage = err.message.length > 50 ? err.message.substring(0, 50) + '...' : err.message;
+	}
+
+	console.error('Ошибка при использовании бота: ', err);
+
+	if (ctx) {
+		await ctx.reply(
+			`*ОШИБКА:* \nПри обработке данных произошла ошибка, попробуйте еще раз.` +
+				`Если ошибка будет повторяться сообщите об этом разработчику \`@nekkinekkinekki\`\n` +
+				`Данные об ошибке:` +
+				'\n```' +
+				errorMessage +
+				'```\n',
+			{ parse_mode: 'MarkdownV2' },
+		);
+
+		ctx.reply('Процесс вынужденно завершен..');
+		ctx.scene.leave();
+	}
+});
+
 bot.use(session());
 bot.use(stage.middleware());
 
@@ -208,6 +234,8 @@ bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
 
 bot.launch().then(() => console.log('Bot started 🚀'));
 
+// -- Функции --
+
 function getChatId(ctx: Context): number {
 	const chatId = ctx.chat?.id;
 
@@ -217,16 +245,16 @@ function getChatId(ctx: Context): number {
 }
 
 async function generateVideo(chatId: number, userState: WizardState): Promise<Buffer> {
-	if (!userState.imagePath || !userState.audioPath || userState.startSec === undefined || !userState.lengthSec || !userState.choice) {
-		throw new Error(`Не все данные для генерации видео указаны! \n ${JSON.stringify(userState, null, 2)}`);
-	}
-
-	const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
-
-	// Формируем команду для bash
-	const cmd = `bash renders/${userState.choice}.sh "${userState.imagePath}" "${userState.audioPath}" "${outputPath}" "${userState.lengthSec}" ${userState.startSec}`;
-
 	try {
+		if (!userState.imagePath || !userState.audioPath || userState.startSec === undefined || !userState.lengthSec || !userState.choice) {
+			throw new Error(`Не все данные для генерации видео указаны! \n ${JSON.stringify(userState, null, 2)}`);
+		}
+
+		const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
+
+		// Формируем команду для bash
+		const cmd = `bash renders/${userState.choice}.sh "${userState.imagePath}" "${userState.audioPath}" "${outputPath}" "${userState.lengthSec}" ${userState.startSec}`;
+
 		// Ждём пока скрипт выполнится
 		await execAsync(cmd);
 
