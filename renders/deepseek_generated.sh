@@ -11,7 +11,7 @@ DURATION="${4:-30}"
 START_SEC="${5:-0}"
 RPM="${6:-10}"
 SIZE="${7:-640}"
-AUDIO_BITRATE="${8:-92k}"
+AUDIO_BITRATE="${8:-64k}"
 
 # ──────────────────────
 # Ассеты
@@ -53,7 +53,8 @@ ffmpeg -y \
       fps=24
     [vout]
   " \
-  -map "[vout]" -map 3:a \
+  -map "[vout]" \
+  -map 3:a \
   -c:v libx265 \
   -crf 30 \
   -preset medium \

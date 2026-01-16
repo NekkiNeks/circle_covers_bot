@@ -1,14 +1,21 @@
 #!/bin/bash
+set -e
 
+# ──────────────────────
 # Аргументы
-COVER="$1"        # путь к изображению
-TRACK="$2"        # путь к аудио
-OUTPUT="$3"       # путь к выходному видео
-DURATION="${4:-30}" # длительность видео в секундах
-START_SEC="${5:-0}" # с какой секунды воспроизводить аудио (по умолчанию 0)
-RPM="${6:-10}"      # скорость вращения в об/мин
+# ──────────────────────
+COVER="$1"
+TRACK="$2"
+OUTPUT="$3"
+DURATION="${4:-30}"
+START_SEC="${5:-0}"
+RPM="$6:-10"
+SIZE="${7:-640}"
+AUDIO_BITRATE="${8:-128k}"
 
-# Конвертируем RPM в rad/s для ffmpeg
+# ──────────────────────
+# RPM → rad/s
+# ──────────────────────
 ROTATE_RAD_PER_SEC=$(echo "scale=6; $RPM * 2 * 3.14159265 / 60" | bc -l)
 
 ffmpeg -y \
@@ -17,13 +24,24 @@ ffmpeg -y \
   -t "$DURATION" \
   -filter_complex "
     [0:v]format=rgba,
-    rotate=${ROTATE_RAD_PER_SEC}*t:ow=rotw(0):oh=roth(0):c=none,
-    scale=300:300,
-    crop=300:300,
-    setsar=1
-    [v]
+         rotate=${ROTATE_RAD_PER_SEC}*t:ow=rotw(0):oh=roth(0):c=none,
+         scale=${SIZE}:${SIZE}:flags=lanczos:force_original_aspect_ratio=increase,
+         crop=${SIZE}:${SIZE},
+         setsar=1,
+         fps=24
+    [vout]
   " \
-  -map "[v]" -map 1:a \
-  -c:v libx264 -crf 20 -preset veryslow -pix_fmt yuv420p \
-  -c:a aac -b:a 128k \
+  -map "[vout]" -map 1:a \
+  -c:v libx264 \
+  -crf 30 \
+  -preset medium \
+  -pix_fmt yuv420p \
+  -c:a libopus \
+  -b:a "$AUDIO_BITRATE" \
+  -vbr on \
+  -compression_level 10 \
+  -movflags +faststart \
+  -g 48 \
+  -bf 2 \
+  -refs 4 \
   "$OUTPUT"
