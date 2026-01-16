@@ -13,7 +13,7 @@ interface WizardState {
 	imagePath?: string;
 	audioPath?: string;
 	startSec?: number;
-	endSec?: number;
+	lengthSec?: number;
 	choice?: 'DEFAULT' | 'VINYL' | 'CD';
 }
 
@@ -38,7 +38,7 @@ imageStep.on(message('photo'), async ctx => {
 
 	UserStates.set(chatId, { imagePath });
 
-	await ctx.reply('Фото получено ✅. Теперь отправь аудио 🎧');
+	await ctx.reply('Фото получено ✅ \nТеперь отправь аудио 🎧');
 	return ctx.wizard.next();
 });
 
@@ -61,7 +61,7 @@ audioStep.on(message('audio'), async ctx => {
 	userState.audioPath = audioPath;
 	UserStates.set(chatId, userState);
 
-	await ctx.reply('Аудио получено ✅. Теперь отправь время старта в секундах (например: 15) ⏱️');
+	await ctx.reply('Аудио получено ✅ \nВведите время старта в секундах (например: 15) ⏱️');
 
 	return ctx.wizard.next();
 });
@@ -73,7 +73,7 @@ startSecStep.on(message('text'), async ctx => {
 
 	const startSec = parseInt(ctx.message.text, 10);
 	if (isNaN(startSec) || startSec < 0) {
-		await ctx.reply('Пожалуйста, отправь корректное число секунд (0 и больше).');
+		await ctx.reply('❌ Пожалуйста, отправь корректное число секунд (0 и больше).');
 		return;
 	}
 
@@ -83,7 +83,35 @@ startSecStep.on(message('text'), async ctx => {
 	userState.startSec = startSec;
 	UserStates.set(chatId, userState);
 
-	await ctx.reply(`Время старта установлено: ${startSec} сек ✅`);
+	await ctx.reply(
+		`Время старта установлено: ${startSec} сек ✅\nВведите продолжительность видео в секундах (например: 30) ⏱️ \n❗Кружочки не могут быть дольше 59 секунд... `,
+	);
+
+	// Переходим к следующему шагу
+	return ctx.wizard.next();
+});
+
+const lenghtSecStep = new Composer<Scenes.WizardContext>();
+lenghtSecStep.on(message('text'), async ctx => {
+	const chatId = getChatId(ctx);
+
+	const lengthSec = parseInt(ctx.message.text, 10);
+	if (isNaN(lengthSec) || lengthSec < 10) {
+		await ctx.reply('❌ Пожалуйста, отправь корректное число секунд (10 и больше).');
+		return;
+	}
+
+	if (lengthSec > 59) {
+		await ctx.reply('❌ Длительность не может быть больше 59 секунд..');
+	}
+
+	// TODO: Вынести в отдельный метод
+	const userState = UserStates.get(chatId);
+	if (!userState) throw new Error('Ошибка получения загруженных данных');
+	userState.lengthSec = lengthSec;
+	UserStates.set(chatId, userState);
+
+	await ctx.reply(`Время длительности установлено: ${lengthSec} сек ✅`);
 
 	await ctx.reply(
 		'Выбери вариант отображения обложки:',
@@ -118,14 +146,12 @@ coverTypeStep.on('callback_query', async ctx => {
 	await ctx.answerCbQuery('Выбор принят...');
 	await ctx.reply(`Выбран тип обложки: \`${selectedCoverType}\` ✅`, { parse_mode: 'MarkdownV2' });
 
-	await ctx.reply('Начинаю генерацию видео.');
+	await ctx.reply('Начинаю генерацию видео...');
 
 	const fileBuffer = await generateVideo(chatId, userState);
-
 	await ctx.reply('Видео сгенерированно и уже отправляется вам, подождите еще немного...');
 
 	await ctx.sendVideoNote({ source: fileBuffer });
-
 	await ctx.reply('Готово! Для того чтобы снова сгенерировать видео просто выберите "Начать" в меню бота. ');
 
 	return ctx.scene.leave();
@@ -137,9 +163,10 @@ const scene = new Scenes.WizardScene<Scenes.WizardContext>(
 		await ctx.reply('Отправьте изображение...');
 		return ctx.wizard.next();
 	},
-	imageStep, // шаг с фильтром
-	audioStep, // аналогично для аудио
-	startSecStep, // для числа
+	imageStep,
+	audioStep,
+	startSecStep,
+	lenghtSecStep,
 	coverTypeStep,
 );
 
@@ -162,6 +189,21 @@ bot.hears('Отмена', async ctx => {
 	return ctx.scene.leave();
 });
 
+bot.command('debug', async ctx => {
+	const chatId = getChatId(ctx);
+	const data = UserStates.get(chatId);
+	const dataAsString = JSON.stringify(data, null, 2);
+
+	// Отображение в консоль
+	console.log(`debug called. Data: \n${dataAsString}`);
+
+	// Составление сообщения для пользователя
+	const message = data ? '```\n' + dataAsString + '\n```' : `Не удалось получить данные chatID: \`${chatId}\` `;
+
+	// Отправка данных пользователю
+	await ctx.reply(message, { parse_mode: 'MarkdownV2' });
+});
+
 bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
 
 bot.launch().then(() => console.log('Bot started 🚀'));
@@ -175,14 +217,17 @@ function getChatId(ctx: Context): number {
 }
 
 async function generateVideo(chatId: number, userState: WizardState): Promise<Buffer> {
-	if (!userState.imagePath || !userState.audioPath || !userState.startSec) {
-		throw new Error('Не все данные для генерации видео указаны');
+	if (!userState.imagePath || !userState.audioPath || userState.startSec === undefined || !userState.lengthSec || !userState.choice) {
+		throw new Error(`Не все данные для генерации видео указаны! \n ${JSON.stringify(userState, null, 2)}`);
 	}
+
+	// TODO
+	if (userState.choice === 'VINYL') userState.choice = 'DEFAULT';
 
 	const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
 
 	// Формируем команду для bash
-	const cmd = `bash render.sh "${userState.imagePath}" "${userState.audioPath}" "${outputPath}" 30 ${userState.startSec}`;
+	const cmd = `bash renders/${userState.choice}.sh "${userState.imagePath}" "${userState.audioPath}" "${outputPath}" "${userState.lengthSec}" ${userState.startSec}`;
 
 	try {
 		// Ждём пока скрипт выполнится
