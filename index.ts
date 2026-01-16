@@ -1,4 +1,5 @@
 import { Composer, Context, Scenes, session, Telegraf, Markup } from 'telegraf';
+import { message } from 'telegraf/filters';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -24,12 +25,6 @@ cancelHandler.command('cancel', async ctx => {
 	return ctx.scene.leave();
 });
 
-/* ===== Шаг 1 — изображение ===== */
-
-// ---------------------------------------------
-
-// specify generic type of Telegraf context
-// thus Typescript will know that ctx.scene exists
 const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN);
 
 // you can also pass step handlers as Composer
@@ -40,6 +35,7 @@ const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN);
 // 	await ctx.reply('Step 2. Via command');
 // 	return ctx.wizard.next();
 // });
+
 
 const scene = new Scenes.WizardScene<Scenes.WizardContext>(
 	'sceneId',
@@ -183,13 +179,30 @@ const stage = new Scenes.Stage<Scenes.WizardContext>([scene]);
 
 bot.use(session());
 // this attaches ctx.scene to the global context
+bot.use(cancelHandler);
 bot.use(stage.middleware());
 
 // you can enter the scene only AFTER registering middlewares
 // otherwise ctx.scene will be undefined
 bot.command('enterScene', ctx => ctx.scene.enter('sceneId'));
 
-bot.launch();
+const mainMenu = Markup.keyboard([['Начать', 'Отмена']])
+	.resize()
+	.oneTime(false); // клавиатура не пропадает после нажатия
+
+bot.start(async ctx => {
+	await ctx.reply('Меню:', mainMenu);
+});
+
+// Обновляем клавиатуру при сбросе сцены или завершении
+bot.hears('Отмена', async ctx => {
+	await ctx.reply('Сцена сброшена на начало ✅', mainMenu);
+	return ctx.scene.leave();
+});
+
+bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
+
+bot.launch().then(() => console.log('Bot started 🚀'));
 
 function getChatId(ctx: Context): number {
 	const chatId = ctx.chat?.id;
