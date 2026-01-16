@@ -22,7 +22,7 @@ const UserStates = new Map<number, WizardState>();
 const TEMP_DIR = './temp';
 const BOT_TOKEN = '8504277957:AAEgUjf1zjVmMmODe7hVSBM_sZ84aLOkcj0';
 
-const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN);
+const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN, { handlerTimeout: 900000 });
 
 // ПОлучение изображения
 const imageStep = new Composer<Scenes.WizardContext>();
@@ -151,7 +151,7 @@ coverTypeStep.on('callback_query', async ctx => {
 	const fileBuffer = await generateVideo(chatId, userState);
 	await ctx.reply('Видео сгенерированно и уже отправляется вам, подождите еще немного...');
 
-	await ctx.sendVideoNote({ source: fileBuffer });
+	await ctx.sendVideoNote({ source: fileBuffer }).catch(err => console.warn(`Ошибка при отправке результата пользователю: `, err));
 	await ctx.reply('Готово! Для того чтобы снова сгенерировать видео просто выберите "Начать" в меню бота. ');
 
 	return ctx.scene.leave();
@@ -186,11 +186,7 @@ bot.catch(async (err, ctx) => {
 		await ctx.reply(
 			`*ОШИБКА:* \nПри обработке данных произошла ошибка, попробуйте еще раз.` +
 				`Если ошибка будет повторяться сообщите об этом разработчику \`@nekkinekkinekki\`\n` +
-				`Данные об ошибке:` +
-				'\n```' +
-				errorMessage +
-				'```\n',
-			{ parse_mode: 'MarkdownV2' },
+				{ parse_mode: 'MarkdownV2' },
 		);
 
 		ctx.reply('Процесс вынужденно завершен..');
@@ -260,6 +256,7 @@ async function generateVideo(chatId: number, userState: WizardState): Promise<Bu
 
 		// Читаем готовый файл в Buffer
 		const buffer = await pfs.readFile(outputPath);
+
 		return buffer;
 	} catch (err) {
 		console.error('Ошибка генерации видео:', err);
