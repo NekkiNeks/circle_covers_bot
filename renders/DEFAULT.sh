@@ -24,6 +24,6 @@ ffmpeg -y \
     [v]
   " \
   -map "[v]" -map 1:a \
-  -c:v libx264 -crf 23 -preset veryslow -pix_fmt yuv420p \
+  -c:v libx264 -crf 20 -preset veryslow -pix_fmt yuv420p \
   -c:a aac -b:a 128k \
   "$OUTPUT"

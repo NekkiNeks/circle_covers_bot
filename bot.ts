@@ -221,9 +221,6 @@ async function generateVideo(chatId: number, userState: WizardState): Promise<Bu
 		throw new Error(`Не все данные для генерации видео указаны! \n ${JSON.stringify(userState, null, 2)}`);
 	}
 
-	// TODO
-	if (userState.choice === 'VINYL') userState.choice = 'DEFAULT';
-
 	const outputPath = path.join(TEMP_DIR, `output_${chatId}.mp4`);
 
 	// Формируем команду для bash
