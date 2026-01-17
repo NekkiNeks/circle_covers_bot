@@ -78,7 +78,7 @@ startSecStep.on(message('text'), async ctx => {
 
 	const startSec = parseInt(ctx.message.text, 10);
 	if (isNaN(startSec) || startSec < 0) {
-		await ctx.reply('❌ Пожалуйста, отправь корректное число секунд (0 и больше).');
+		await ctx.reply('❌ Пожалуйста, отправь корректное число секунд (0 и больше)');
 		return;
 	}
 
@@ -108,6 +108,7 @@ lenghtSecStep.on(message('text'), async ctx => {
 
 	if (lengthSec > 59) {
 		await ctx.reply('❌ Длительность не может быть больше 59 секунд..');
+		return;
 	}
 
 	// TODO: Вынести в отдельный метод
@@ -183,8 +184,7 @@ bot.catch(async (err, ctx) => {
 
 	if (ctx) {
 		await ctx.reply(
-			`*ОШИБКА:* \nПри обработке данных произошла ошибка, попробуйте еще раз.` +
-				`Если ошибка будет повторяться сообщите об этом разработчику \`@nekkinekkinekki\`\n`,
+			`\*ОШИБКА:\* \nПри обработке данных произошла ошибка, попробуйте еще раз\\.\n Если ошибка будет повторяться сообщите об этом разработчику \`@nekkinekkinekki\`\n`,
 			{ parse_mode: 'MarkdownV2' },
 		);
 
@@ -223,6 +223,10 @@ bot.command('debug', async ctx => {
 
 	// Отправка данных пользователю
 	await ctx.reply(message, { parse_mode: 'MarkdownV2' });
+});
+
+bot.command('error', async ctx => {
+	throw new Error('test');
 });
 
 bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
