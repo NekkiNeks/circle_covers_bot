@@ -9,7 +9,7 @@ TRACK="$2"
 OUTPUT="$3"
 DURATION="${4:-30}"
 START_SEC="${5:-0}"
-RPM="$6:-10"
+RPM="${6:-10}"
 SIZE="${7:-640}"
 AUDIO_BITRATE="${8:-128k}"
 
