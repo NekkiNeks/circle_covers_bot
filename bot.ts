@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import pfs from 'fs/promises';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
+import 'dotenv/config';
 
 const execAsync = promisify(exec);
 
@@ -20,7 +21,11 @@ interface WizardState {
 const UserStates = new Map<number, WizardState>();
 
 const TEMP_DIR = './temp';
-const BOT_TOKEN = '8504277957:AAEgUjf1zjVmMmODe7hVSBM_sZ84aLOkcj0';
+let BOT_TOKEN = process.env.BOT_TOKEN;
+
+if (!BOT_TOKEN) {
+	throw new Error('Отсутсвует BOT_TOKEN в env');
+}
 
 const bot = new Telegraf<Scenes.WizardContext>(BOT_TOKEN, { handlerTimeout: 900000 });
 
@@ -174,12 +179,6 @@ const stage = new Scenes.Stage<Scenes.WizardContext>([scene]);
 
 // Обработка ошибок
 bot.catch(async (err, ctx) => {
-	let errorMessage: string = 'unknown error';
-
-	if (err instanceof Error) {
-		errorMessage = err.message.length > 50 ? err.message.substring(0, 50) + '...' : err.message;
-	}
-
 	console.error('Ошибка при использовании бота: ', err);
 
 	if (ctx) {
@@ -228,10 +227,12 @@ bot.command('debug', async ctx => {
 
 bot.hears('Начать', ctx => ctx.scene.enter('sceneId'));
 
-bot.launch().then(() => console.log('Bot started 🚀'));
+bot.launch();
+
+const me = await bot.telegram.getMe();
+console.log(`🤖 Bot started: @${me.username} (id: ${me.id}) (token: ${BOT_TOKEN})`);
 
 // -- Функции --
-
 function getChatId(ctx: Context): number {
 	const chatId = ctx.chat?.id;
 
